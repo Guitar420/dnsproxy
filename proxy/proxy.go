@@ -441,7 +441,6 @@ func (p *Proxy) replyFromCache(d *DNSContext) bool {
 			log.Debug("Serving response from subnet cache")
 			return true
 		}
-
 	} else if mask == 0 && p.cache != nil {
 		val, ok := p.cache.Get(d.Req)
 		if ok && val != nil {
@@ -476,11 +475,9 @@ func (p *Proxy) setInCache(d *DNSContext, resp *dns.Msg) {
 			log.Debug("Invalid response from server: ECS data mismatch: %s/%d -- %s/%d",
 				d.ecsReqIP, d.ecsReqMask, ip, mask)
 		}
-
 	} else if d.ecsReqIP != nil {
 		// server doesn't support ECS - cache response for all subnets
 		p.cacheSubnet.SetWithSubnet(resp, ip, scope)
-
 	} else {
 		p.cache.Set(resp) // use general cache
 	}
