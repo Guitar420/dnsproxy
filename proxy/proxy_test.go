@@ -800,3 +800,65 @@ func TestECS(t *testing.T) {
 	assert.True(t, mask == 24)
 	assert.True(t, scope == 16)
 }
+
+// Return the first A value in response
+func getIPFromResponse(resp *dns.Msg) net.IP {
+	for _, ans := range resp.Answer {
+		a, ok := ans.(*dns.A)
+		if !ok {
+			continue
+		}
+		return a.A
+	}
+	return nil
+}
+
+// Return the first CNAME value in response
+func getCNAMEFromResponse(resp *dns.Msg) string {
+	for _, ans := range resp.Answer {
+		cn, ok := ans.(*dns.CNAME)
+		if !ok {
+			continue
+		}
+		return cn.Target
+	}
+	return ""
+}
+
+// Resolve the same host with the different client subnet values
+// The responses must be different
+func TestECSProxy(t *testing.T) {
+	dnsProxy := createTestProxy(t, nil)
+	dnsProxy.EnableEDNSClientSubnet = true
+	dnsProxy.CacheEnabled = true
+	err := dnsProxy.Start()
+	assert.True(t, err == nil)
+
+	d := DNSContext{}
+	clientIP := net.ParseIP("208.67.222.0")
+	d.Req = createHostTestMessage("video.profileedge.ru")
+	d.Addr = &net.TCPAddr{
+		IP: clientIP,
+	}
+	err = dnsProxy.Resolve(&d)
+	assert.True(t, err == nil)
+	ip1 := getIPFromResponse(d.Res)
+	assert.True(t, ip1 != nil)
+	cn1 := getCNAMEFromResponse(d.Res)
+	assert.Equal(t, cn1, "us.profileedge.ru.")
+
+	clientIP = net.ParseIP("95.161.182.0")
+	d.Req = createHostTestMessage("video.profileedge.ru")
+	d.Addr = &net.TCPAddr{
+		IP: clientIP,
+	}
+	err = dnsProxy.Resolve(&d)
+	assert.True(t, err == nil)
+	ip2 := getIPFromResponse(d.Res)
+	assert.True(t, ip2 != nil)
+	assert.True(t, !ip2.Equal(ip1))
+	cn2 := getCNAMEFromResponse(d.Res)
+	assert.Equal(t, cn2, "ru.profileedge.ru.")
+
+	_ = dnsProxy.Stop()
+}
