@@ -161,8 +161,8 @@ func parseECS(m *dns.Msg) (net.IP, uint8, uint8) {
 }
 
 // Set EDNS Client Subnet option in DNS request object
-// Return IP mask
-func setECS(m *dns.Msg, ip net.IP, scope uint8) uint8 {
+// Return masked IP and mask
+func setECS(m *dns.Msg, ip net.IP, scope uint8) (net.IP, uint8) {
 	o := new(dns.OPT)
 	o.SetUDPSize(4096)
 	o.Hdr.Name = "."
@@ -173,17 +173,17 @@ func setECS(m *dns.Msg, ip net.IP, scope uint8) uint8 {
 	if ip.To4() != nil {
 		e.Family = 1
 		e.SourceNetmask = 24
-		e.Address = ip.To4()
+		e.Address = ip.To4().Mask(net.CIDRMask(int(e.SourceNetmask), 32))
 	} else {
 		e.Family = 2
-		e.SourceNetmask = 128
-		e.Address = ip
+		e.SourceNetmask = 112
+		e.Address = ip.Mask(net.CIDRMask(int(e.SourceNetmask), 128))
 	}
 	e.SourceScope = scope
 	o.Option = append(o.Option, e)
 
 	m.Extra = append(m.Extra, o)
-	return e.SourceNetmask
+	return e.Address, e.SourceNetmask
 }
 
 // Return TRUE if IP is within public Internet IP range
