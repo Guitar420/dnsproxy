@@ -834,11 +834,11 @@ func TestECSProxy(t *testing.T) {
 	err := dnsProxy.Start()
 	assert.True(t, err == nil)
 
+	// first request
 	d := DNSContext{}
-	clientIP := net.ParseIP("208.67.222.0")
 	d.Req = createHostTestMessage("video.profileedge.ru")
 	d.Addr = &net.TCPAddr{
-		IP: clientIP,
+		IP: net.ParseIP("208.67.222.0"),
 	}
 	err = dnsProxy.Resolve(&d)
 	assert.True(t, err == nil)
@@ -847,10 +847,20 @@ func TestECSProxy(t *testing.T) {
 	cn1 := getCNAMEFromResponse(d.Res)
 	assert.Equal(t, cn1, "us.profileedge.ru.")
 
-	clientIP = net.ParseIP("95.161.182.0")
+	// request from another client with the same subnet - must be served from cache
 	d.Req = createHostTestMessage("video.profileedge.ru")
 	d.Addr = &net.TCPAddr{
-		IP: clientIP,
+		IP: net.ParseIP("208.67.222.1"),
+	}
+	err = dnsProxy.Resolve(&d)
+	assert.True(t, err == nil)
+	assert.True(t, getIPFromResponse(d.Res).Equal(ip1))
+	assert.Equal(t, cn1, getCNAMEFromResponse(d.Res))
+
+	// request from a different subnet
+	d.Req = createHostTestMessage("video.profileedge.ru")
+	d.Addr = &net.TCPAddr{
+		IP: net.ParseIP("95.161.182.0"),
 	}
 	err = dnsProxy.Resolve(&d)
 	assert.True(t, err == nil)
