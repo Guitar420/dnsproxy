@@ -73,7 +73,8 @@ type Proxy struct {
 	ratelimitBuckets *gocache.Cache // where the ratelimiters are stored, per IP
 	ratelimitLock    sync.Mutex     // Synchronizes access to ratelimitBuckets
 
-	cache *cache // cache instance (nil if cache is disabled)
+	cache       *cache // cache instance (nil if cache is disabled)
+	cacheSubnet *cache // cache instance (nil if cache is disabled)
 
 	Config // proxy configuration
 
@@ -95,6 +96,27 @@ type Config struct {
 
 	RefuseAny  bool // if true, refuse ANY requests
 	AllServers bool // if true, parallel queries to all configured upstream servers are enabled
+
+	// Enable EDNS Client Subnet option
+	// DNS requests to the upstream server will contain an OPT record with Client Subnet option.
+	//  If the original request already has this option set, we pass it through as is.
+	//  Otherwise, we set it ourselves using the client IP with subnet /24 (for IPv4).
+	//
+	// If the upstream server supports ECS, it sets subnet number in the response.
+	// This subnet number along with the client IP and other data is used as a cache key.
+	// Next time, if a client from the same subnet requests this host name,
+	//  we get the response from cache.
+	// If another client from a different subnet requests this host name,
+	//  we pass his request to the upstream server.
+	//
+	// If the upstream server doesn't support ECS (there's no subnet number in response),
+	//  this response will be cached for all clients.
+	//
+	// If client IP is private (i.e. not public), we don't add EDNS record into a request.
+	// And so there will be no EDNS record in response either.
+	// We store these responses in general cache (without subnet)
+	//  so they will never be used for clients with public IP addresses.
+	EnableEDNSClientSubnet bool
 
 	CacheEnabled   bool // cache status
 	CacheSizeBytes int  // Cache size (in bytes). Default: 64k
@@ -126,6 +148,9 @@ type DNSContext struct {
 	// Upstream servers to use for this request
 	// If set, Resolve() uses it instead of default servers
 	Upstreams []upstream.Upstream
+
+	ecsReqIP   net.IP // ECS IP used in request
+	ecsReqMask uint8  // ECS mask used in request
 }
 
 // UpstreamConfig is a wrapper for list of default upstreams and map of reserved domains and corresponding upstreams
@@ -225,6 +250,9 @@ func (p *Proxy) Start() error {
 	if p.CacheEnabled {
 		log.Printf("DNS cache is enabled")
 		p.cache = &cache{cacheSize: p.CacheSizeBytes}
+		if p.Config.EnableEDNSClientSubnet {
+			p.cacheSubnet = &cache{cacheSize: p.CacheSizeBytes}
+		}
 	}
 
 	if p.MaxGoroutines > 0 {
@@ -363,15 +391,105 @@ func (p *Proxy) getUpstreamsForDomain(host string) []upstream.Upstream {
 	return p.Upstreams
 }
 
-// Resolve is the default resolving method used by the DNS proxy to query upstreams
-func (p *Proxy) Resolve(d *DNSContext) error {
-	if p.cache != nil {
+// Get response from general or subnet cache
+// Return TRUE if response is found in cache
+func (p *Proxy) replyFromCache(d *DNSContext) bool {
+	if p.cache == nil {
+		return false
+	}
+
+	if !p.Config.EnableEDNSClientSubnet {
 		val, ok := p.cache.Get(d.Req)
 		if ok && val != nil {
 			d.Res = val
 			log.Tracef("Serving cached response")
-			return nil
+			return true
 		}
+		return false
+	}
+
+	d.ecsReqIP = nil
+	d.ecsReqMask = uint8(0)
+
+	ip, mask, _ := parseECS(d.Req)
+	if mask == 0 {
+		// Set EDNS Client-Subnet data
+		var clientIP net.IP
+		switch addr := d.Addr.(type) {
+		case *net.UDPAddr:
+			clientIP = addr.IP
+		case *net.TCPAddr:
+			clientIP = addr.IP
+		}
+
+		if clientIP != nil && isPublicIP(clientIP) {
+			if clientIP.To4() != nil {
+				clientIP = clientIP.To4()
+			}
+			ip = clientIP
+			mask = setECS(d.Req, ip, 0)
+			log.Debug("Set ECS data: %s/%d", ip, mask)
+		}
+	} else {
+		log.Debug("Passing through ECS data: %s/%d", ip, mask)
+	}
+
+	if mask != 0 && p.cacheSubnet != nil {
+		val, ok := p.cacheSubnet.GetWithSubnet(d.Req, ip, mask)
+		if ok && val != nil {
+			d.Res = val
+			log.Debug("Serving response from subnet cache")
+			return true
+		}
+
+	} else if mask == 0 && p.cache != nil {
+		val, ok := p.cache.Get(d.Req)
+		if ok && val != nil {
+			d.Res = val
+			log.Debug("Serving response from general cache")
+			return true
+		}
+	}
+
+	d.ecsReqIP = ip
+	d.ecsReqMask = mask
+	return false
+}
+
+// Store response in general or subnet cache
+func (p *Proxy) setInCache(d *DNSContext, resp *dns.Msg) {
+	if p.cache == nil {
+		return
+	}
+
+	if !p.Config.EnableEDNSClientSubnet {
+		p.cache.Set(resp)
+		return
+	}
+
+	ip, mask, scope := parseECS(resp)
+	if ip != nil {
+		if ip.Equal(d.ecsReqIP) && mask == d.ecsReqMask {
+			log.Debug("ECS option in response: %s/%d", ip, scope)
+			p.cacheSubnet.SetWithSubnet(resp, ip, scope)
+		} else {
+			log.Debug("Invalid response from server: ECS data mismatch: %s/%d -- %s/%d",
+				d.ecsReqIP, d.ecsReqMask, ip, mask)
+		}
+
+	} else if d.ecsReqIP != nil {
+		// server doesn't support ECS - cache response for all subnets
+		p.cacheSubnet.SetWithSubnet(resp, ip, scope)
+
+	} else {
+		p.cache.Set(resp) // use general cache
+	}
+}
+
+// Resolve is the default resolving method used by the DNS proxy to query upstreams
+func (p *Proxy) Resolve(d *DNSContext) error {
+	if p.replyFromCache(d) {
+		return nil
 	}
 
 	upstreams := d.Upstreams
@@ -400,9 +518,7 @@ func (p *Proxy) Resolve(d *DNSContext) error {
 		d.Upstream = u
 
 		// Saving cached response
-		if p.cache != nil {
-			p.cache.Set(reply)
-		}
+		p.setInCache(d, reply)
 	}
 
 	if reply == nil {

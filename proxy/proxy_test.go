@@ -20,6 +20,7 @@ import (
 
 	"github.com/AdguardTeam/dnsproxy/upstream"
 	"github.com/miekg/dns"
+	"github.com/stretchr/testify/assert"
 )
 
 const (
@@ -788,4 +789,14 @@ func publicKey(priv interface{}) interface{} {
 	default:
 		return nil
 	}
+}
+
+func TestECS(t *testing.T) {
+	m := &dns.Msg{}
+	mask := setECS(m, net.IP{1, 2, 3, 0}, 16)
+	assert.True(t, mask == 24)
+	ip, mask, scope := parseECS(m)
+	assert.True(t, ip.Equal(net.IP{1, 2, 3, 0}))
+	assert.True(t, mask == 24)
+	assert.True(t, scope == 16)
 }
