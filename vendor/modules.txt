@@ -33,7 +33,7 @@ github.com/go-test/deep
 github.com/jessevdk/go-flags
 # github.com/joomcode/errorx v1.0.0
 github.com/joomcode/errorx
-# github.com/miekg/dns v1.1.19
+# github.com/miekg/dns v1.1.25
 github.com/miekg/dns
 # github.com/patrickmn/go-cache v2.1.0+incompatible
 github.com/patrickmn/go-cache
