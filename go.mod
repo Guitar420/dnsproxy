@@ -14,7 +14,7 @@ require (
 	github.com/jessevdk/go-flags v1.4.0
 	github.com/joomcode/errorx v1.0.0
 	github.com/kr/pretty v0.1.0 // indirect
-	github.com/miekg/dns v1.1.19
+	github.com/miekg/dns v1.1.25
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/shirou/gopsutil v2.19.9+incompatible
 	github.com/stretchr/testify v1.4.0
