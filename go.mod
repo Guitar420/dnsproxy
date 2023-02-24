@@ -18,10 +18,7 @@ require (
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/shirou/gopsutil v2.19.9+incompatible
 	github.com/stretchr/testify v1.4.0
-	golang.org/x/crypto v0.0.0-20191001170739-f9e2070545dc // indirect
-	golang.org/x/net v0.0.0-20191002035440-2ec189313ef0
-	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e // indirect
-	golang.org/x/sys v0.0.0-20191002091554-b397fe3ad8ed // indirect
+	golang.org/x/net v0.7.0
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
 	gopkg.in/yaml.v2 v2.2.3 // indirect
 )
